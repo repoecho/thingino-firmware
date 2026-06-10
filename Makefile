@@ -374,8 +374,9 @@ endef
 
 .PHONY: all bootstrap build build_fast build-info clean clean-nfs-debug cleanbuild defconfig distclean \
 	dev fast help pack remove_bins repack sdk toolchain update \
-	upload_tftp dfu ota br-% check-config force-config show-config-deps clean-config \
-	tftpd-start tftpd-stop tftpd-restart tftpd-status tftpd-logs show-vars run user-dirs setup-hooks
+	dfu ota br-% check-config force-config show-config-deps clean-config \
+	tftpd-start tftpd-stop tftpd-restart tftpd-status tftpd-logs tftp-copy tftp-upload \
+	show-vars run user-dirs setup-hooks
 
 # Run a binary under QEMU in the build sysroot.
 # Usage: CAMERA=<camera> make run CMD="/bin/ffmpeg --help"  (binary with args)
@@ -426,14 +427,6 @@ dev: user-dirs defconfig build pack
 # Clean build from scratch with parallel compilation
 cleanbuild: user-dirs distclean defconfig build_fast pack
 	@$(TEAL) "$@"
-ifneq ($(TFTP_ROOT),)
-	@echo "Copying images to TFTP root..."
-	@sudo mkdir -p $(TFTP_ROOT)
-	@sudo cp -f $(FIRMWARE_BIN_FULL) $(TFTP_ROOT)/$(FIRMWARE_NAME_FULL)
-	@sudo cp -f $(FIRMWARE_BIN_FULL).sha256sum $(TFTP_ROOT)/$(FIRMWARE_NAME_FULL).sha256sum 2>/dev/null || true
-	if [ -n "$$IP" ]; then sudo cp -f $(FIRMWARE_BIN_FULL) $(TFTP_ROOT)/$(printf '%02X%02X%02X%02X\n' $${IP//./ }) || true; fi
-	@echo "TFTP: $(TFTP_ROOT)/$(FIRMWARE_NAME_FULL)"
-endif
 	@date +%T
 
 # update repo and submodules with buildroot patch management
@@ -812,12 +805,6 @@ ota:
 	test -f "$$fw_path" || { echo "ERROR: Neither $(FIRMWARE_BIN_FULL) nor $(GENERIC_FIRMWARE_BIN_FULL) was found. Run make first."; exit 1; }; \
 	$(SCRIPTS_DIR)/fw_ota.sh "$$fw_path" $(CAMERA_IP_ADDRESS)
 
-# upload firmware to tftp server
-upload_tftp:
-	@$(TEAL) "$@"
-	@test -f $(FIRMWARE_BIN_FULL) || { echo "ERROR: $(FIRMWARE_BIN_FULL) not found. Run make first."; exit 1; }
-	if [ -n "$$IP" ]; then busybox tftp -l $(FIRMWARE_BIN_FULL) -r $$(printf '%02X%02X%02X%02X\n' $${IP//./ }).img -p $(TFTP_IP_ADDRESS); fi
-
 # Start standalone TFTP server for serving firmware images
 tftpd-start:
 	@$(TEAL) "$@"
@@ -856,6 +843,29 @@ tftpd-status:
 tftpd-logs:
 	@$(TEAL) "$@"
 	@$(SCRIPTS_DIR)/tftpd-server.sh logs
+
+# Copy firmware to TFTP server
+tftp-copy:
+	@$(TEAL) "$@"
+	@test -f $(FIRMWARE_BIN_FULL) || { echo "ERROR: $(FIRMWARE_BIN_FULL) not found. Run make first."; exit 1; }
+ifneq ($(TFTP_ROOT),)
+	@echo "Copying images to TFTP root..."
+	@mkdir -p $(TFTP_ROOT)
+	@cp -f $(FIRMWARE_BIN_FULL) $(TFTP_ROOT)/$(FIRMWARE_NAME_FULL)
+	@cp -f $(FIRMWARE_BIN_FULL).sha256sum $(TFTP_ROOT)/$(FIRMWARE_NAME_FULL).sha256sum 2>/dev/null || true
+	ifneq ($(IP),)
+		@ln -rsf $(TFTP_ROOT)/$(FIRMWARE_NAME_FULL) $(TFTP_ROOT)/$(printf '%02X%02X%02X%02X\n' $${IP//./ }) || true; \
+	endif
+	@echo "TFTP: $(TFTP_ROOT)/$(FIRMWARE_NAME_FULL)"
+endif
+
+# Upload firmware to TFTP server
+tftp-upload:
+	@$(TEAL) "$@"
+	@test -f $(FIRMWARE_BIN_FULL) || { echo "ERROR: $(FIRMWARE_BIN_FULL) not found. Run make first."; exit 1; }
+ifneq ($(TFTP_IP_ADDRESS)$(IP),)
+	busybox tftp -l $(FIRMWARE_BIN_FULL) -r $$(printf '%02X%02X%02X%02X\n' $${IP//./ }).img -p $(TFTP_IP_ADDRESS)
+endif
 
 # download buildroot cache bundle from latest github release
 download-cache:
@@ -1030,23 +1040,9 @@ $(KERNEL_BIN):
 #	mv -vf $(OUTPUT_DIR)/images/uImage $@
 
 # rebuild rootfs (depends on kernel to ensure proper build order)
-# Pre-stamp uboot so Buildroot skips it during rootfs-squashfs.
-# It will be dirclean'd and rebuilt properly in the $(U_BOOT_BIN) rule,
-# once partition sizes are known from the rootfs.
 $(ROOTFS_BIN): $(KERNEL_BIN)
 	@$(TEAL) "$@"
 	$(call thingino_run_build,$(BR2_MAKE) $(BR2_MAKE_JOBS) host-libyaml host-uboot-tools)
-	mkdir -p $(U_BOOT_BUILD_DIR)
-	mkdir -p $(OUTPUT_DIR)/per-package/uboot/host
-	mkdir -p $(OUTPUT_DIR)/per-package/uboot/target
-	touch $(U_BOOT_BUILD_DIR)/.stamp_downloaded \
-	      $(U_BOOT_BUILD_DIR)/.stamp_extracted \
-	      $(U_BOOT_BUILD_DIR)/.stamp_patched \
-	      $(U_BOOT_BUILD_DIR)/.stamp_configured \
-	      $(U_BOOT_BUILD_DIR)/.stamp_built \
-	      $(U_BOOT_BUILD_DIR)/.stamp_installed \
-	      $(U_BOOT_BUILD_DIR)/.stamp_target_installed \
-	      $(U_BOOT_BUILD_DIR)/.stamp_images_installed
 	$(call thingino_run_build,$(BR2_MAKE) $(BR2_MAKE_JOBS) rootfs-squashfs)
 
 $(U_BOOT_ENV_TXT): $(ROOTFS_BIN)
@@ -1163,6 +1159,8 @@ help:
 	  make build-all      build all camera configs one by one\n\
 	  make help           print this help\n\
 	  make run <bin>      run a target binary via QEMU (e.g. make run bin/ffmpeg)\n\
+	  make tftp-copy      copy image to TFTP server
+	  make tftp-upload    upload image to TFTP server
 	  \n\
 	Configuration Management:\n\
 	  make defconfig      configure buildroot (auto-detects changes)\n\
