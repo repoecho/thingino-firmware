@@ -20,7 +20,8 @@ define THINGINO_SOUNDS_INSTALL_TARGET_CMDS
 		$(INSTALL) -m 0644 -t $(TARGET_DIR)/usr/share/sounds \
 			$(THINGINO_SOUNDS_PKGDIR)/files/chime_1.$(THINGINO_SOUNDS_FORMAT) \
 			$(THINGINO_SOUNDS_PKGDIR)/files/chime_2.$(THINGINO_SOUNDS_FORMAT) \
-			$(THINGINO_SOUNDS_PKGDIR)/files/chime_3.$(THINGINO_SOUNDS_FORMAT); \
+			$(THINGINO_SOUNDS_PKGDIR)/files/chime_3.$(THINGINO_SOUNDS_FORMAT) \
+			$(THINGINO_SOUNDS_PKGDIR)/files/alarm.$(THINGINO_SOUNDS_FORMAT); \
 	fi
 
 	# common voice messages
@@ -56,6 +57,18 @@ define THINGINO_SOUNDS_INSTALL_TARGET_CMDS
 			$(THINGINO_SOUNDS_PKGDIR)/files/doorbell_2.$(THINGINO_SOUNDS_FORMAT) \
 			$(THINGINO_SOUNDS_PKGDIR)/files/doorbell_3.$(THINGINO_SOUNDS_FORMAT); \
 	fi
+
+	# HMS security system sounds (original Wyze hubvoice)
+	$(INSTALL) -m 0644 -t $(TARGET_DIR)/usr/share/sounds \
+		$(THINGINO_SOUNDS_PKGDIR)/files/armed_home.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/armed_away.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/disarmed.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/entry_delay_started.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/system_is_arming.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/hazard_siren.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/fast_alert_beep.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/slow_alert_beep.$(THINGINO_SOUNDS_FORMAT) \
+		$(THINGINO_SOUNDS_PKGDIR)/files/tiny_pluck.$(THINGINO_SOUNDS_FORMAT)
 endef
 
 $(eval $(generic-package))

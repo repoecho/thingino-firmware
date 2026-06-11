@@ -1,0 +1,7 @@
+config BR2_PACKAGE_GATEWAYD
+	bool "Wyze Sense Hub CC1310 radio daemon (gatewayd)"
+	help
+	  CC1310 sub-1GHz radio daemon for Wyze Sense Hub GW3U.
+	  Reads sensor data from CC1310 via UART and publishes
+	  to MQTT on localhost (gateways/# topics with HA auto-discovery).
+	  Requires mosquitto (included in core config).

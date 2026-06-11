@@ -1,0 +1,313 @@
+#!/bin/sh
+# HMS daemon - security system state machine
+
+HMS_DIR="/tmp/hms"
+CONFIG_DIR="/etc/hms"
+SENSORS_DIR="$HMS_DIR/sensors"
+CONFIG_FILE="$CONFIG_DIR/config.json"
+STATE_FILE="$HMS_DIR/state"
+ARMED_TYPE_FILE="$HMS_DIR/armed_type"
+DELAY_END_FILE="$HMS_DIR/delay_end"
+DELAY_SENSOR_FILE="$HMS_DIR/delay_sensor"
+ALARM_PID_FILE="$HMS_DIR/alarm_pid"
+DELAY_PID_FILE="$HMS_DIR/delay_pid"
+PIN_FAILS_FILE="$HMS_DIR/pin_fails"
+EVENTS_FILE="$HMS_DIR/events.json"
+GW_STATUS_FILE="$HMS_DIR/gateway_status"
+LIVE_LOG="$HMS_DIR/live.log"
+LOGFILE="/var/log/hmsd.log"
+SOUNDS_DIR="/usr/share/sounds"
+HUB_MAC_FILE="$HMS_DIR/hub_mac"
+MAX_EVENTS=200
+MAX_LIVE=100
+HUB_MAC=""
+
+mkdir -p "$SENSORS_DIR" "$CONFIG_DIR" "$HMS_DIR"
+
+if [ ! -f "$CONFIG_FILE" ]; then
+  echo '{"system_pin":"1234","entry_delay_home":30,"entry_delay_away":15,"exit_delay_home":45,"exit_delay_away":60,"silent_entry":false,"silent_exit":false,"tune_enabled":true,"tune_volume":"mid","tune_sensors":[],"sensors":{},"protected_hours":{}}' > "$CONFIG_FILE"
+fi
+[ -f "$STATE_FILE" ] || echo "DISARMED" > "$STATE_FILE"
+[ -f "$ARMED_TYPE_FILE" ] || echo "none" > "$ARMED_TYPE_FILE"
+echo 0 > "$DELAY_END_FILE"
+echo '' > "$DELAY_SENSOR_FILE"
+echo 0 > "$PIN_FAILS_FILE"
+
+log() { echo "[hmsd] $(date '+%Y-%m-%d %H:%M:%S') $*" >> "$LOGFILE"; }
+cfg() { jct "$CONFIG_FILE" get "$1" 2>/dev/null | tr -d '"'; }
+
+mqtt_pub() { mosquitto_pub -h localhost -t "$1" -m "$2" -r 2>/dev/null; }
+
+log_live() {
+  n=$(date +%s)
+  en="{\"time\":$n,\"event\":\"$2\",\"topic\":\"$1\",\"detail\":\"$3\"}"
+  tmp=$(mktemp -t hms_live.XXXXXX 2>/dev/null) || return
+  echo "$en" > "$tmp"
+  [ -f "$LIVE_LOG" ] && [ -s "$LIVE_LOG" ] && cat "$LIVE_LOG" >> "$tmp"
+  head -n "$MAX_LIVE" "$tmp" > "$LIVE_LOG"
+  rm -f "$tmp"
+}
+
+log_event() {
+  nw=$(date +%s)
+  en="{\"time\":$nw,\"sensor\":\"$1\",\"name\":\"$4\",\"class\":\"$2\",\"state\":\"$3\"}"
+  tmp=$(mktemp -t hms_evt.XXXXXX 2>/dev/null) || return
+  echo "$en" > "$tmp"
+  [ -f "$EVENTS_FILE" ] && [ -s "$EVENTS_FILE" ] && cat "$EVENTS_FILE" >> "$tmp"
+  head -n "$MAX_EVENTS" "$tmp" > "$EVENTS_FILE"
+  rm -f "$tmp"
+}
+
+rac_play() { f="$SOUNDS_DIR/$1.opus"; [ -f "$f" ] && rac play "$f" 2>/dev/null; }
+
+kill_pid() { f=$1; [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true; rm -f "$f"; }
+
+set_state() {
+  echo "$1" > "$STATE_FILE"
+  echo "${2:-none}" > "$ARMED_TYPE_FILE"
+  log "state: $1 (${2:-none})"
+  # Publish to MQTT for HA integration
+  [ -n "$HUB_MAC" ] && mqtt_pub "gateways/${HUB_MAC}/alarm/state" "{\"state\":\"$1\",\"armed_type\":\"${2:-none}\"}"
+}
+
+start_alarm_loop() {
+  (
+    while [ "$(cat "$STATE_FILE" 2>/dev/null)" = "ALARM" ]; do
+      rac_play "hazard_siren"
+      sleep 4
+    done
+  ) &
+  echo "$!" > "$ALARM_PID_FILE"
+}
+
+start_delay() {
+  sec=$1 dt=$2 sn=${3:-}
+  end=$(( $(date +%s) + sec ))
+  echo "$end" > "$DELAY_END_FILE"
+  echo "$sn" > "$DELAY_SENSOR_FILE"
+  (
+    sleep "$sec"
+    s=$(cat "$STATE_FILE" 2>/dev/null)
+    if [ "$s" = "ARMING_EXIT_DELAY" ]; then
+      at=$(cat "$ARMED_TYPE_FILE" 2>/dev/null)
+      if [ "$at" = "home" ]; then
+        set_state "ARMED_HOME" "home"
+        log_event "SYSTEM" "ARM" "ARMED_HOME" "System"
+      else
+        set_state "ARMED_AWAY" "away"
+        log_event "SYSTEM" "ARM" "ARMED_AWAY" "System"
+      fi
+      log_live "system" "ARMED" "$at"
+      [ "$at" = "home" ] && rac_play "armed_home" || rac_play "armed_away"
+      echo "$(date +%s)" > /tmp/hms/arm_start
+    elif [ "$s" = "ENTRY_DELAY" ]; then
+      set_state "ALARM" "none"
+      log_event "SYSTEM" "ALARM" "TRIGGERED" "Alarm"
+      log_live "alarm" "ALARM_TRIGGERED" "timeout"
+      start_alarm_loop
+    fi
+  ) &
+  echo "$!" > "$DELAY_PID_FILE"
+}
+
+cancel_delay() {
+  kill_pid "$DELAY_PID_FILE"
+  echo 0 > "$DELAY_END_FILE"
+  echo '' > "$DELAY_SENSOR_FILE"
+}
+
+trigger_alarm_immediate() {
+  cancel_delay
+  set_state "ALARM" "none"
+  log_event "SYSTEM" "ALARM" "TRIGGERED" "Alarm"
+  log_live "alarm" "ALARM_TRIGGERED" "immediate"
+  start_alarm_loop
+}
+
+cmd_arm() {
+  at=$1 p=${2:-}
+  cur=$(cat "$STATE_FILE" 2>/dev/null)
+  case "$cur" in
+    DISARMED) ;;
+    *) [ -n "$p" ] && check_pin "$p" || return 1 ;;
+  esac
+  cancel_delay
+  kill_pid "$ALARM_PID_FILE"
+  echo 0 > "$PIN_FAILS_FILE"
+  ed=$(cfg "exit_delay_${at}" 2>/dev/null)
+  [ -z "$ed" ] && ed=45
+  set_state "ARMING_EXIT_DELAY" "$at"
+  log_event "SYSTEM" "ARM" "ARMING_$at" "System"
+  log_live "system" "ARMING" "$at (${ed}s)"
+  rac_play "system_is_arming"
+  if [ "$ed" -gt 0 ]; then
+    sl=$(cfg silent_exit 2>/dev/null)
+    if [ "$sl" != "true" ]; then
+      ( r=$ed; while [ "$r" -gt 0 ] && [ "$(cat "$STATE_FILE" 2>/dev/null)" = "ARMING_EXIT_DELAY" ]; do rac_play "fast_alert_beep"; sleep 1; r=$((r - 1)); done ) &
+    fi
+    start_delay "$ed" "exit"
+  else
+    sleep 0.5
+    [ "$at" = "home" ] && set_state "ARMED_HOME" "home" || set_state "ARMED_AWAY" "away"
+    log_event "SYSTEM" "ARM" "ARMED_$at" "System"
+    log_live "system" "ARMED" "$at"
+    [ "$at" = "home" ] && rac_play "armed_home" || rac_play "armed_away"
+    echo "$(date +%s)" > /tmp/hms/arm_start
+  fi
+}
+
+cmd_disarm() {
+  p=$1
+  check_pin "$p" || return 1
+  cancel_delay
+  kill_pid "$ALARM_PID_FILE"
+  echo 0 > "$PIN_FAILS_FILE"
+  set_state "DISARMED" "none"
+  log_event "SYSTEM" "DISARM" "DISARMED" "System"
+  log_live "system" "DISARMED" ""
+  rac_play "disarmed"
+  started=$(cat /tmp/hms/arm_start 2>/dev/null)
+  if [ -n "$started" ] && [ "$started" != "0" ]; then
+    now=$(date +%s); elapsed=$((now - started))
+    hours=$((elapsed / 3600)); mins=$(((elapsed % 3600) / 60))
+    if [ "$hours" -gt 0 ] || [ "$mins" -gt 5 ]; then
+      today=$(date +%Y-%m-%d)
+      cur_h=$(cfg "protected_hours.$today" 2>/dev/null)
+      [ -z "$cur_h" ] && cur_h=0
+      nh=$((cur_h + hours)); [ "$mins" -gt 30 ] && nh=$((nh + 1))
+      tmpf=$(mktemp -t hms_cfg.XXXXXX)
+      sed "s/\"protected_hours\":{[^}]*}/\"protected_hours\":{\"$today\":$nh}/" "$CONFIG_FILE" > "$tmpf" 2>/dev/null && mv "$tmpf" "$CONFIG_FILE"
+    fi
+    echo 0 > /tmp/hms/arm_start
+  fi
+}
+
+check_pin() {
+  ep=$(cfg system_pin 2>/dev/null)
+  [ "$1" = "$ep" ]
+}
+
+# returns 0=ok, 1=wrong, 2=locked/triggered
+check_pin_with_fail() {
+  check_pin "$1" && { echo 0 > "$PIN_FAILS_FILE"; return 0; }
+  n=$(cat "$PIN_FAILS_FILE" 2>/dev/null || echo 0)
+  n=$((n + 1))
+  echo "$n" > "$PIN_FAILS_FILE"
+  cur=$(cat "$STATE_FILE" 2>/dev/null)
+  if [ "$n" -ge 3 ] && [ "$cur" = "ENTRY_DELAY" ]; then
+    trigger_alarm_immediate
+    return 2
+  fi
+  return 1
+}
+
+handle_sensor() {
+  sm=$1 pl=$2
+  mkdir -p "$SENSORS_DIR/$sm"
+  st=$(echo "$pl" | sed -n 's/.*"state":"\([^"]*\)".*/\1/p')
+  sc=$(echo "$pl" | sed -n 's/.*"class":"\([^"]*\)".*/\1/p')
+  ba=$(echo "$pl" | sed -n 's/.*"battery":\([0-9]*\).*/\1/p')
+  rs=$(echo "$pl" | sed -n 's/.*"rssi":\(-[0-9]*\).*/\1/p')
+  [ -f "$SENSORS_DIR/$sm/state" ] && ps=$(cat "$SENSORS_DIR/$sm/state") || ps=""
+  [ -n "$st" ] && echo "$st" > "$SENSORS_DIR/$sm/state"
+  [ -n "$sc" ] && echo "$sc" > "$SENSORS_DIR/$sm/class"
+  [ -n "$ba" ] && echo "$ba" > "$SENSORS_DIR/$sm/battery"
+  [ -n "$rs" ] && echo "$rs" > "$SENSORS_DIR/$sm/rssi"
+  nm=$(cfg "sensors.$sm.name" 2>/dev/null); [ -z "$nm" ] && nm="$sm"
+  log_live "$sm" "$sc" "${st} batt:${ba}% rssi:${rs}"
+  [ -z "$ps" ] || [ "$st" = "$ps" ] && return 0
+  log_event "$sm" "$sc" "$st" "$nm"
+  stype=$(cfg "sensors.$sm.type" 2>/dev/null); [ -z "$stype" ] && stype="entry"
+  cur=$(cat "$STATE_FILE" 2>/dev/null)
+  is_open=0; [ "$st" = "OPEN" ] || [ "$st" = "ACTIVE" ] && is_open=1
+  # Chime in DISARMED (entry only)
+  if [ "$cur" = "DISARMED" ] && [ "$is_open" = "1" ] && [ "$stype" != "motion" ] && [ "$sc" != "MOTION" ]; then
+    te=$(cfg tune_enabled 2>/dev/null)
+    if [ "$te" = "true" ]; then
+      ts=$(cfg tune_sensors 2>/dev/null)
+      # Empty array [] means all chime; otherwise only listed sensors
+      if [ "$ts" = "[]" ] || echo "$ts" | grep -q "\"$sm\""; then
+        rac_play "tiny_pluck"
+      fi
+    fi
+  fi
+  # Armed handling
+  case "$cur" in
+    ARMED_HOME) [ "$is_open" = "1" ] && { [ "$stype" = "entry" ] || [ "$sc" = "CONTACT" ]; } && entry_trigger "$sm" ;;
+    ARMED_AWAY) [ "$is_open" = "1" ] && entry_trigger "$sm" ;;
+  esac
+}
+
+entry_trigger() {
+  sm=$1; at=$(cat "$ARMED_TYPE_FILE" 2>/dev/null)
+  # Extract full MAC from the 8-char sensor ID
+  full_mac="$sm"
+  ed=$(cfg "entry_delay_${at}" 2>/dev/null); [ -z "$ed" ] && ed=30
+  set_state "ENTRY_DELAY" "$at"
+  rac_play "entry_delay_started"
+  log_live "alarm" "ENTRY_DELAY" "$sm (${ed}s)"
+  sc=$(cat "$SENSORS_DIR/$sm/class" 2>/dev/null)
+  nm=$(cfg "sensors.$sm.name" 2>/dev/null); [ -z "$nm" ] && nm="$sm"
+  log_event "$sm" "$sc" "OPEN_ARMED" "$nm"
+  if [ "$ed" -gt 0 ]; then
+    sl=$(cfg silent_entry 2>/dev/null)
+    if [ "$sl" != "true" ]; then
+      ( r=$ed; while [ "$r" -gt 0 ] && [ "$(cat "$STATE_FILE" 2>/dev/null)" = "ENTRY_DELAY" ]; do rac_play "fast_alert_beep"; sleep 1; r=$((r - 1)); done ) &
+    fi
+    start_delay "$ed" "entry" "$sm"
+  else
+    trigger_alarm_immediate
+  fi
+}
+
+log "starting"
+
+# Command watcher
+watch_commands() {
+  CMD_FILE="/tmp/hms/arm_cmd"
+  while true; do
+    if [ -f "$CMD_FILE" ]; then
+      cmd=$(cat "$CMD_FILE" 2>/dev/null); rm -f "$CMD_FILE"
+      case "$cmd" in
+        home|away) cmd_arm "$cmd" ;;
+        disarm:*) cmd_disarm "${cmd#disarm:}" ;;
+        panic) trigger_alarm_immediate; log_event "SYSTEM" "ALARM" "PANIC" "System" ;;
+      esac
+    fi
+    sleep 0.5
+  done
+}
+
+watch_commands &
+WPID=$!
+
+# Main MQTT loop
+while true; do
+  echo "offline" > "$GW_STATUS_FILE"
+  log "connecting to mosquitto..."
+  mosquitto_sub -h localhost -v -t "gateways/#" -F "%t %p" 2>> "$LOGFILE" | while read -r line; do
+    [ -z "$line" ] && continue
+    t="${line%% *}"; p="${line#* }"
+    [ "$t" = "$p" ] && [ -z "${t##*gateways*}" ] && continue
+    # Extract hub MAC from topic (gateways/{MAC}/...)
+    hm=$(echo "$t" | awk -F/ '{print $2}')
+    [ -n "$hm" ] && [ "$hm" != "#" ] && { echo "$hm" > "$HUB_MAC_FILE"; HUB_MAC="$hm"; }
+    case "$t" in
+      gateways/*/status) echo "$p" > "$GW_STATUS_FILE"; log_live "gateway" "STATUS" "$p" ;;
+      gateways/*/sensors/*/state)
+        sm=$(echo "$t" | awk -F/ '{print $4}')
+        handle_sensor "$sm" "$p"
+        ;;
+      gateways/*/sensors/*/battery)
+        sm=$(echo "$t" | awk -F/ '{print $4}')
+        mkdir -p "$SENSORS_DIR/$sm"; echo "$p" > "$SENSORS_DIR/$sm/battery"
+        ;;
+      gateways/*/sensors/*/rssi)
+        sm=$(echo "$t" | awk -F/ '{print $4}')
+        mkdir -p "$SENSORS_DIR/$sm"; echo "$p" > "$SENSORS_DIR/$sm/rssi"
+        ;;
+    esac
+  done
+  log "disconnected, retrying in 5s..."
+  sleep 5
+done

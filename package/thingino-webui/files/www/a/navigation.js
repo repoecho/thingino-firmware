@@ -126,6 +126,14 @@
       },
       {
         type: "dropdown",
+        id: "ddSecurity",
+        label: "Security",
+        items: [
+          { label: "Alarm System", href: "/hms.html" },
+        ],
+      },
+      {
+        type: "dropdown",
         id: "ddStreamer",
         label: "Streamer",
         items: [

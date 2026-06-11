@@ -1,0 +1,47 @@
+#!/bin/sh
+
+DAEMON="hmsd"
+PIDFILE="/var/run/hms-daemon.pid"
+
+start() {
+    printf "Starting %s: " "$DAEMON"
+    start-stop-daemon -S -q -m -b -p "$PIDFILE" -x /usr/sbin/hmsd
+    rc=$?
+    [ "$rc" = 0 ] && echo "OK" || echo "FAIL"
+}
+
+stop() {
+    printf "Stopping %s: " "$DAEMON"
+    start-stop-daemon -K -q -p "$PIDFILE"
+    rc=$?
+    [ "$rc" = 0 ] && echo "OK" || echo "FAIL"
+    rm -f "$PIDFILE"
+    rm -f /tmp/hms/alarm_pid
+}
+
+status() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        echo "hmsd: running (pid $(cat "$PIDFILE"))"
+    else
+        echo "hmsd: not running"
+    fi
+}
+
+restart() {
+    stop
+    sleep 1
+    start
+}
+
+case "$1" in
+    start) start ;;
+    stop) stop ;;
+    status) status ;;
+    restart|reload) restart ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
+
+exit $?

@@ -66,6 +66,10 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/usr/sbin/recordmgr
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/mqtt-sub-dispatcher \
 		$(TARGET_DIR)/usr/sbin/mqtt-sub-dispatcher
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/usr/sbin/hmsd \
+		$(TARGET_DIR)/usr/sbin/hmsd
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/S93hms-daemon \
+		$(TARGET_DIR)/etc/init.d/S93hms-daemon
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/telegram-cam-register \
 		$(TARGET_DIR)/usr/sbin/telegram-cam-register
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/telegram-cam-agent \
@@ -172,6 +176,8 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/tool-send2-webhook.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-sensor-data.html \
 		$(TARGET_DIR)/var/www/tool-sensor-data.html
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/hms.html \
+		$(TARGET_DIR)/var/www/hms.html
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/tool-timelapse.html \
 		$(TARGET_DIR)/var/www/tool-timelapse.html
 	if [ "$(BR2_THINGINO_DEV_PACKAGES)" = "y" ]; then \
@@ -276,6 +282,8 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/a/tool-send2-webhook.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-sensor-data.js \
 		$(TARGET_DIR)/var/www/a/tool-sensor-data.js
+	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/hms.js \
+		$(TARGET_DIR)/var/www/a/hms.js
 	$(INSTALL) -D -m 0644 $(THINGINO_WEBUI_PKGDIR)/files/www/a/tool-timelapse.js \
 		$(TARGET_DIR)/var/www/a/tool-timelapse.js
 	if [ "$(BR2_THINGINO_DEV_PACKAGES)" = "y" ]; then \
@@ -371,6 +379,24 @@ define THINGINO_WEBUI_INSTALL_TARGET_CMDS
 		$(TARGET_DIR)/var/www/x/json-gpio.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-heartbeat.cgi \
 		$(TARGET_DIR)/var/www/x/json-heartbeat.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-mode.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-mode.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-sensors.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-sensors.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-events.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-events.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-config.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-config.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-livelog.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-livelog.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-keypad.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-keypad.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-sound-test.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-sound-test.cgi
+	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-hms-protected.cgi \
+		$(TARGET_DIR)/var/www/x/json-hms-protected.cgi
+	# Remove ONVIF camera protocol (~264KB) — not needed for headless gateway
+	rm -f $(TARGET_DIR)/var/www/onvif/onvif.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-heartbeat-slow.cgi \
 		$(TARGET_DIR)/var/www/x/json-heartbeat-slow.cgi
 	$(INSTALL) -D -m 0755 $(THINGINO_WEBUI_PKGDIR)/files/www/x/json-imaging.cgi \

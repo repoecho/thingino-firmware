@@ -1,0 +1,64 @@
+#!/bin/sh
+#
+# S99gatewayd - Wyze Sense Hub CC1310 radio daemon
+#
+# Disables the console getty on ttyS0 so the CC1310 UART
+# is available, then launches gatewayd.
+# Enable on boot: /etc/init.d/S99gatewayd enable
+
+DAEMON=/usr/sbin/gatewayd
+PIDFILE=/var/run/gatewayd.pid
+LOGFILE=/var/log/gatewayd.log
+INITTAB=/etc/inittab
+
+start() {
+	if grep -qs "ttyS0" "$INITTAB" 2>/dev/null && ! grep -qs "^#.*ttyS0" "$INITTAB"; then
+		sed -i 's/^\(.*ttyS0.*\)$/#\1/' "$INITTAB"
+		kill -HUP 1 2>/dev/null
+		usleep 200000
+	fi
+
+	killall getty 2>/dev/null
+
+	[ -x "$DAEMON" ] || {
+		echo "gatewayd: $DAEMON not found"
+		return 1
+	}
+
+	start-stop-daemon -S -q -m -b -p "$PIDFILE" -x "$DAEMON" -- --daemon
+	echo "gatewayd: started"
+}
+
+stop() {
+	start-stop-daemon -K -q -p "$PIDFILE"
+	rm -f "$PIDFILE"
+	echo "gatewayd: stopped"
+}
+
+status() {
+	if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+		echo "gatewayd: running (pid $(cat "$PIDFILE"))"
+	else
+		echo "gatewayd: not running"
+	fi
+}
+
+case "$1" in
+	start)   start   ;;
+	stop)    stop    ;;
+	restart) stop; sleep 1; start ;;
+	status)  status  ;;
+	enable)
+		ln -sf /etc/init.d/S99gatewayd /etc/rc.d/S99gatewayd 2>/dev/null
+		echo "gatewayd: enabled on boot"
+		;;
+	disable)
+		rm -f /etc/rc.d/S99gatewayd 2>/dev/null
+		echo "gatewayd: disabled on boot"
+		;;
+	*)
+		echo "Usage: $0 {start|stop|restart|status|enable|disable}"
+		exit 1
+		;;
+esac
+exit 0

@@ -1,1 +1,28 @@
-{ "gpio": { "cc1310_rst": 58, "bg21_rst": 62 } }
+{
+  "gpio": {
+    "battery_power": 6,
+    "wlan": {
+      "pin": 50,
+      "active_low": false
+    },
+    "speaker_enable": 63,
+    "cc1310": {
+      "reset": 62,
+      "boot": 61,
+      "aux_reset": 58
+    },
+    "leds": {
+      "yellow_1": 49,
+      "yellow_2": 57,
+      "yellow_3": 59
+    }
+  },
+  "eth": {
+    "mac": "80:48:2C:26:42:7C"
+  },
+  "gatewayd": {
+    "mqtt_host": "localhost",
+    "mqtt_port": 1883,
+    "uart": "/dev/ttyS0"
+  }
+}

@@ -1,34 +1,42 @@
 #!/bin/sh
 
 start() {
-	echo_title "Starting mosquitto"
+	printf "Starting mosquitto: "
 	start-stop-daemon -S -q -m -b -p /var/run/mosquitto.pid \
-		--exec /usr/sbin/mosquitto \
-		-- -c /etc/mosquitto/mosquitto.conf
+		-x /usr/sbin/mosquitto -- -c /etc/mosquitto/mosquitto.conf
+	rc=$?
+	[ "$rc" = 0 ] && echo "OK" || echo "FAIL"
 }
 
 stop() {
-	echo_title "Stopping mosquitto"
+	printf "Stopping mosquitto: "
 	start-stop-daemon -K -q -p /var/run/mosquitto.pid
+	rc=$?
+	[ "$rc" = 0 ] && echo "OK" || echo "FAIL"
+	rm -f /var/run/mosquitto.pid
+}
+
+status() {
+	if [ -f /var/run/mosquitto.pid ] && kill -0 "$(cat /var/run/mosquitto.pid)" 2>/dev/null; then
+		echo "mosquitto: running (pid $(cat /var/run/mosquitto.pid))"
+	else
+		echo "mosquitto: not running"
+	fi
 }
 
 restart() {
 	stop
+	sleep 1
 	start
 }
 
 case "$1" in
-	start)
-		start
-		;;
-	stop)
-		stop
-		;;
-	restart|reload)
-		restart
-		;;
+	start) start ;;
+	stop) stop ;;
+	restart|reload) restart ;;
+	status) status ;;
 	*)
-		echo "Usage: $0 {start|stop|restart}"
+		echo "Usage: $0 {start|stop|restart|status}"
 		exit 1
 		;;
 esac
